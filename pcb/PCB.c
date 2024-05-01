@@ -79,3 +79,71 @@ void pcb_delete(PCB* pcb) {
     free(pcb);
 
 }
+
+///////////////////////////////////////////////
+
+typedef struct process_table {
+
+    PCB** table; // Array of PCBs
+
+    int size; // Number of PCBs
+
+    int capacity; // Capacity of the table
+
+} ProcessTable;
+
+process_table* process_table_init(int capacity) {
+
+    ProcessTable* table = (ProcessTable*) malloc(sizeof(ProcessTable));
+
+    table->table = (PCB**) malloc(capacity * sizeof(PCB*));
+
+    table->size = 0;
+
+    table->capacity = capacity;
+
+    return table;
+
+}
+
+void process_table_insert(ProcessTable* table, PCB* pcb) {
+
+    if (table->size < table->capacity) {
+
+        table->table[table->size++] = pcb;
+
+    }
+
+}
+
+void process_table_delete(ProcessTable* table) {
+
+    for (int i = 0; i < table->size; i++) {
+
+        pcb_delete(table->table[i]);
+
+    }
+
+    free(table->table);
+
+    free(table);
+
+}
+
+PCB* process_table_get(ProcessTable* table, pid_t pid) {
+
+    for (int i = 0; i < table->size; i++) {
+
+        if (table->table[i]->pid == pid) {
+
+            return table->table[i];
+
+        }
+
+    }
+
+    return NULL;
+
+}
+
+
