@@ -42,11 +42,11 @@ int main(int argc, char *argv[])
     }
     else if (algorithm == 2)
     {
-        // SRTN_Scheduler();
+         SRTN_Scheduler();
     }
     else if (algorithm == 3)
     {
-        // RR_Scheduler();
+        RR_Scheduler();
     }
     else
     {
@@ -221,6 +221,125 @@ void HPF_Scheduler()
         {
             received_process = receive_process(process);
             pri_queue_enqueue(&hpf_ready_queue, received_process->priority, (void *)received_process);
+        }
+        if (curr_process_num >= process_num)
+            break;
+    }
+    perf_process_final(running_pcb);
+}
+
+
+
+
+void RR(pri_queue *processes)
+{
+    signal(SIGALRM, RR_Handler);
+    int x = pri_queue_dequeue(processes, (void **)&running_process);
+    if (x == 0)
+        return;
+
+    // start the process
+    running_pcb = process_table_find(&pt, running_process);
+    running_pcb->state = 1;
+    log_process_data(running_pcb);
+    kill(running_pcb->id, SIGCONT);
+
+    // set an alarm for the quantum time
+    alarm(QUANTUM_TIME);
+
+    // wait for the process to finish or for the alarm to go off
+    pause();
+
+    // if the process has not finished, stop it and put it back in the queue
+    if (running_pcb->state != 4) {
+        running_pcb->state = 2;
+        log_process_data(running_pcb);
+        kill(running_pcb->id, SIGSTOP);
+        pri_queue_enqueue(processes, running_process->priority, (void *)running_process);
+    } else {
+        // process has finished
+        log_process_term(running_pcb);
+        add_Sums(running_pcb);
+        // remove the process from the process table
+        process_table_remove(&pt, running_process);
+        curr_process_num++;
+    }
+}
+
+void RR_Handler(int signum)
+{
+    // do nothing
+}
+
+void RR_Scheduler()
+{
+    pri_queue rr_ready_queue;
+    pri_queue_init(&rr_ready_queue);
+    while (1)
+    {
+        RR(&rr_ready_queue);
+        while (1)
+        {
+            received_process = receive_process(process);
+            pri_queue_enqueue(&rr_ready_queue, received_process->priority, (void *)received_process);
+        }
+        if (curr_process_num >= process_num)
+            break;
+    }
+    perf_process_final(running_pcb);
+}
+
+void SRTN(pri_queue *processes)
+{
+    signal(SIGALRM, SRTN_Handler);
+    int x = pri_queue_dequeue(processes, (void **)&running_process);
+    if (x == 0)
+        return;
+
+    // start the process
+    running_pcb = process_table_find(&pt, running_process);
+    running_pcb->state = 1;
+    log_process_data(running_pcb);
+    kill(running_pcb->id, SIGCONT);
+
+    // set an alarm for the remaining time of the process
+    alarm(running_pcb->remaining_time);
+
+    // wait for the process to finish or for the alarm to go off
+    pause();
+
+    // the process has not finished
+    if (running_pcb->state != 4) {
+        running_pcb->state = 2;
+        log_process_data(running_pcb);
+        kill(running_pcb->id, SIGSTOP);
+        pri_queue_enqueue(processes, running_process->remaining_time, (void *)running_process);
+    } else {
+        // process has finished
+        log_process_term(running_pcb);
+        add_Sums(running_pcb);
+        
+        process_table_remove(&pt, running_process);
+        curr_process_num++;
+    }
+}
+
+void SRTN_Handler(int signum)
+{
+    // do nothing
+}
+
+void SRTN_Scheduler()
+{
+    pri_queue srtn_ready_queue;
+    pri_queue_init(&srtn_ready_queue);
+    while (1)
+    {
+        SRTN(&srtn_ready_queue);
+        while (1)
+        {
+            received_process = receive_process(process);
+            pri_queue_enqueue(&srtn_ready_queue, received_process->remaining_time, (void *)received_process);
         }
         if (curr_process_num >= process_num)
             break;
