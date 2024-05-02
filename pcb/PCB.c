@@ -9,7 +9,7 @@
 
 typedef struct pcb {
 
-    pid_t pid; // Process ID
+    int pid; // Process ID
 
     int state; // Process state (running, waiting, etc.)
 
@@ -24,9 +24,9 @@ typedef struct pcb {
 
 // Initialize a new PCB
 
-PCB* pcb_init(pid_t pid) {
+PCB* pcb_init(int pid) {
 
-    PCB* pcb = (PCB*) malloc(sizeof(PCB));
+    PCB* pcb = (PCB*)malloc(sizeof(PCB));
 
     pcb->pid = pid;
 
@@ -92,11 +92,11 @@ typedef struct process_table {
 
 } ProcessTable;
 
-process_table* process_table_init(int capacity) {
+ProcessTable* process_table_init(int capacity) {
 
-    ProcessTable* table = (ProcessTable*) malloc(sizeof(ProcessTable));
+    ProcessTable* table = (ProcessTable*)malloc(sizeof(ProcessTable));
 
-    table->table = (PCB**) malloc(capacity * sizeof(PCB*));
+    table->table = (PCB**)malloc(capacity * sizeof(PCB*));
 
     table->size = 0;
 
@@ -130,7 +130,7 @@ void process_table_delete(ProcessTable* table) {
 
 }
 
-PCB* process_table_get(ProcessTable* table, pid_t pid) {
+PCB* process_table_get(ProcessTable* table, int pid) {
 
     for (int i = 0; i < table->size; i++) {
 
@@ -145,5 +145,3 @@ PCB* process_table_get(ProcessTable* table, pid_t pid) {
     return NULL;
 
 }
-
-
