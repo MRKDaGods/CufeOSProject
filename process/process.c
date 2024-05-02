@@ -2,19 +2,41 @@
 
 /* Modify this file as needed*/
 int remainingtime;
+void Stop_Handler(int signum);
+void Continue_Handler(int signum);
+int prev_time;
+int next_time;
 
-int main(int agrc, char* argv[])
+int main(int argc, char *argv[])
 {
+    signal(SIGUSR1, Stop_Handler);
+    signal(SIGUSR2, Continue_Handler);
     initClk();
-
-    //TODO it needs to get the remaining time from somewhere
-    //remainingtime = ??;
+    printf("Process %d started\n", getpid());
+    if (argc < 2)
+    {
+        fprintf(stderr, "Incorrect usage, to run use: ./bin/process.out <time>\n");
+        return 1;
+    }
+    remainingtime = atoi(argv[1]);
+    prev_time = getClk();
     while (remainingtime > 0)
     {
-        // remainingtime = ??;
+        next_time = getClk();
+        remainingtime -= next_time - prev_time;
     }
 
-    destroyClk(false); 
+    destroyClk(false);
+    printf("Process %d finished\n", getpid());
+    kill(getppid(), SIGUSR1);
+}
 
-    return 0;
+void Stop_Handler(int signum)
+{
+    raise(SIGTSTP);
+}
+void Continue_Handler(int signum)
+{
+    prev_time = getClk();
+    raise(SIGCONT);
 }

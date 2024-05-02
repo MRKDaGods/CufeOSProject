@@ -1,4 +1,4 @@
-#include <stdio.h>      //if you don't use scanf/printf change this include
+#include <stdio.h> //if you don't use scanf/printf change this include
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -10,44 +10,43 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include "pri_queue.h"
+#include <errno.h>
 
 typedef short bool;
 #define true 1
 #define false 0
 
 #define SHKEY 300
-
+#define MSGKEY 400
+#define QUANTUM_TIME 2
 
 ///==============================
-//don't mess with this variable//
-int* shmaddr;                 //
+// don't mess with this variable//
+int *shmaddr; //
 //===============================
-
-
 
 int getClk()
 {
     return *shmaddr;
 }
 
-
 /*
  * All process call this function at the beginning to establish communication between them and the clock module.
  * Again, remember that the clock is only emulation!
-*/
+ */
 void initClk()
 {
     int shmid = shmget(SHKEY, 4, 0444);
     while ((int)shmid == -1)
     {
-        //Make sure that the clock exists
+        // Make sure that the clock exists
         printf("Wait! The clock not initialized yet!\n");
         sleep(1);
         shmid = shmget(SHKEY, 4, 0444);
     }
-    shmaddr = (int*)shmat(shmid, (void*)0, 0);
+    shmaddr = (int *)shmat(shmid, (void *)0, 0);
 }
-
 
 /*
  * All process call this function at the end to release the communication
@@ -55,14 +54,14 @@ void initClk()
  * Again, Remember that the clock is only emulation!
  * Input: terminateAll: a flag to indicate whether that this is the end of simulation.
  *                      It terminates the whole system and releases resources.
-*/
+ */
 
 void destroyClk(bool terminateAll)
 {
     shmdt(shmaddr);
     if (terminateAll)
     {
-        
+
         killpg(getpgrp(), SIGINT);
     }
 }
@@ -70,9 +69,16 @@ void destroyClk(bool terminateAll)
 // our stuff
 
 // process data as read from file
-typedef struct process_data {
+typedef struct process_data
+{
     int id;
     int arrival_time;
     int running_time;
     int priority;
 } process_data;
+
+typedef struct msgbuff
+{
+    long mtype;
+    struct process_data data;
+} msgbuff;

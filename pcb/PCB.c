@@ -1,147 +1,89 @@
-#include <stdio.h>
+#include "headers.h"
 
-#include <stdlib.h>
+/*state : 0 : idle
+     1:running
+     2:Terminating
+    */
 
-#include <unistd.h>
+typedef struct pcb
+{
+    int id;
+    int start_time;
+    int end_time;
+    int remaining_time;
+    int arrival_time;
+    int waiting_time;
+    int running_time;
+    int last_running_time;
+    int total_time;
+    int state;
+    int priority;
+    int TA;
+    float WTA;
+} pcb;
 
+typedef struct process_table
+{
+    struct pcb **processTable;
+    int size;
+    int max_capacity;
+} process_table;
 
-// Process Control Block (PCB) structure
-
-typedef struct pcb {
-
-    int pid; // Process ID
-
-    int state; // Process state (running, waiting, etc.)
-
-    int execution_time; // Total execution time
-
-    int remaining_time; // Remaining execution time
-
-    int waiting_time; // Total waiting time
-
-} PCB;
-
-
-// Initialize a new PCB
-
-PCB* pcb_init(int pid) {
-
-    PCB* pcb = (PCB*)malloc(sizeof(PCB));
-
-    pcb->pid = pid;
-
-    pcb->state = 0; // Running
-
-    pcb->execution_time = 0;
-
-    pcb->remaining_time = 0;
-
-    pcb->waiting_time = 0;
-
-    return pcb;
-
+void process_table_init(process_table *pt, int max_capacity)
+{
+    pt->processTable = (pcb **)malloc(sizeof(pcb *) * max_capacity);
+    pt->size = 0;
+    pt->max_capacity = max_capacity;
 }
 
-
-// Update the state of a PCB
-
-void pcb_update_state(PCB* pcb, int state) {
-
-    pcb->state = state;
-
+int process_table_add(process_table *pt, process_data *p)
+{
+    if (!pt || !p || pt->size >= pt->max_capacity)
+        return 0;
+    pcb *new_pcb = (pcb *)malloc(sizeof(pcb));
+    memset(new_pcb, 0, sizeof(pcb));
+    new_pcb->id = p->id;
+    new_pcb->running_time = p->running_time;
+    new_pcb->arrival_time = p->arrival_time;
+    new_pcb->remaining_time = p->running_time;
+    new_pcb->priority = p->priority;
+    pt->processTable[p->id - 1] = new_pcb;
+    pt->size++;
+    return 1;
 }
-
-
-// Update the execution time of a PCB
-
-void pcb_update_execution_time(PCB* pcb, int time) {
-
-    pcb->execution_time += time;
-
-    pcb->remaining_time -= time;
-
+pcb *process_table_find(process_table *pt, process_data *p)
+{
+    if (!p || !pt || p->id < 0 || p->id > pt->size)
+        return NULL;
+    return pt->processTable[p->id - 1];
 }
-
-
-// Update the waiting time of a PCB
-
-void pcb_update_waiting_time(PCB* pcb, int time) {
-
-    pcb->waiting_time += time;
-
+int process_table_remove(process_table *pt, process_data *p)
+{
+    if (!p || !pt || p->id < 0 || p->id > pt->size || pt->size == 0 || !process_table_find(pt, p))
+        return 0;
+    pt->processTable[p->id - 1] = NULL;
+    free(pt->processTable[p->id - 1]);
+    pt->size--;
+    return 1;
 }
-
-
-// Delete a PCB
-
-void pcb_delete(PCB* pcb) {
-
-    free(pcb);
-
-}
-
-///////////////////////////////////////////////
-
-typedef struct process_table {
-
-    PCB** table; // Array of PCBs
-
-    int size; // Number of PCBs
-
-    int capacity; // Capacity of the table
-
-} ProcessTable;
-
-ProcessTable* process_table_init(int capacity) {
-
-    ProcessTable* table = (ProcessTable*)malloc(sizeof(ProcessTable));
-
-    table->table = (PCB**)malloc(capacity * sizeof(PCB*));
-
-    table->size = 0;
-
-    table->capacity = capacity;
-
-    return table;
-
-}
-
-void process_table_insert(ProcessTable* table, PCB* pcb) {
-
-    if (table->size < table->capacity) {
-
-        table->table[table->size++] = pcb;
-
+void process_table_free(process_table *pt)
+{
+    while (pt->size != 0)
+    {
+        free(pt->processTable[pt->size - 1]);
+        pt->size--;
     }
-
+    free(pt->processTable);
 }
 
-void process_table_delete(ProcessTable* table) {
-
-    for (int i = 0; i < table->size; i++) {
-
-        pcb_delete(table->table[i]);
-
+void process_table_print(process_table *pt)
+{
+    for (int i = 0; i < pt->size; i++)
+    {
+        printf("Process %d : id %d , arrival time %d , running time %d , priority %d\n", i + 1, pt->processTable[i]->id, pt->processTable[i]->arrival_time, pt->processTable[i]->running_time, pt->processTable[i]->priority);
     }
-
-    free(table->table);
-
-    free(table);
-
 }
-
-PCB* process_table_get(ProcessTable* table, int pid) {
-
-    for (int i = 0; i < table->size; i++) {
-
-        if (table->table[i]->pid == pid) {
-
-            return table->table[i];
-
-        }
-
-    }
-
-    return NULL;
-
+int process_table_get_size(process_table *pt)
+{
+    return pt->size;
 }
