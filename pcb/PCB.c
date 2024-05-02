@@ -3,6 +3,8 @@
 /*state : 0 : idle
      1:running
      2:Terminating
+     3:resumed
+     4:finished
     */
 
 typedef struct pcb
