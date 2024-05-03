@@ -1,348 +1,562 @@
+#include "headers.h"
+#include "pri_queue.h"
+#include "doubly_linked_list.h"
 #include "pcb.h"
 
-// Scheduler responsibilities:
-// implement HPF, SRTN, RR
-// 1-start new process
-// 2-Switch between two processes according to the scheduling algorithm. (Stop the old process and save its state and start/resume another one.)
-// 3-Keep a process control block (PCB) for each process in the system. A PCB should keep track of the state of a process; running/waiting, execution time, remaining time, waiting time, etc
-// 4-Delete the data of a process when it gets notifies that it finished. When a process finishes it should notify the scheduler on termination, the scheduler does NOT terminate the process.
-// 4- Report:  cpu utilization, AVG waiting time,AVG weighted turnaround time, and Standard deviation for average weighted turnaround time.
-// 5- generate 2 output files
-FILE *log_file;
-FILE *perf_file;
-struct process_data *running_process;
-struct process_data *received_process;
-struct process_table pt;
-struct process_data process;
-struct pcb *running_pcb;
-double AVG_WTA, AVG_Waiting, STD_WTA, SUM_WTA, SUM_Waiting, SUM_burst_time;
-process_data *receive_process(process_data process);
-void create_child_process(process_data *p, process_table *pt);
-void log_process_data(pcb *p);
-void log_process_term(pcb *p);
-void perf_process_final();
-void add_Sums(pcb *p);
-void HPF_Scheduler();
-void HPF(pri_queue *processes);
-int process_num, curr_process_num, algorithm;
+int initialize_message_queue();
+int register_process_control_block(process_data* data, int algorithm, /*out*/ process_control_block** pcbEntry);
+int fork_process(process_control_block* pcb);
+process_control_block* process_table_find_pcb_from_system(int systemPid);
 
-int main(int argc, char *argv[])
-{
-    initClk();
-    if (argc < 3)
-    {
-        perror("Incorrect usage, to run use: ./bin/scheduler.out <process_num> <algorithm>\n");
-        exit(1);
-    }
-    algorithm = atoi(argv[1]);
-    process_num = atoi(argv[2]);
-    if (algorithm == 1)
-    {
-        HPF_Scheduler();
-    }
-    else if (algorithm == 2)
-    {
-         SRTN_Scheduler();
-    }
-    else if (algorithm == 3)
-    {
-        RR_Scheduler();
-    }
-    else
-    {
-        perror("Incorrect usage, to run use: ./bin/scheduler.out <process_num> <algorithm>\n");
-        exit(1);
-    }
-    destroyClk(true);
-}
-void log_process_data(pcb *p)
-{
-    // log process data to log file
-    log_file = fopen("scheduler.log", "a");
-    if (!log_file)
-    {
-        perror("Error in opening log file");
-        exit(-1);
-    }
-    fprintf(log_file, "At time %d process %d ", getClk(), p->id);
-    switch (p->state)
-    {
-    case 1: // started
-        fprintf(log_file, "started ");
-        p->start_time = getClk();
-    case 2: // stopped
-        fprintf(log_file, "stopped ");
-    case 3: // Resumed
-        fprintf(log_file, "resumed ");
-    case 4: // terminated
-        fprintf(log_file, "terminated ");
-    default:
-        break;
-    }
-    fprintf(log_file, "arr %d total %d remain %d wait %d\n", p->arrival_time, p->total_time, p->remaining_time, p->waiting_time);
-    fclose(log_file);
-}
-void log_process_term(pcb *p)
-{
-    // log process termination to log file
-    log_file = fopen("scheduler.log", "a");
-    if (!log_file)
-    {
-        perror("Error in opening log file");
-        exit(-1);
-    }
-    fprintf(log_file, "At time %d process %d ", getClk(), p->id);
-    fprintf(log_file, "terminated ");
-    p->total_time =
-        p->TA = getClk() - p->arrival_time;
-    p->WTA = (float)p->TA / p->total_time;
-    fprintf(log_file, "arr %d total %d remain %d wait %d TA %d WTA %.2f \n", p->arrival_time, p->total_time, p->remaining_time, p->waiting_time, p->TA, p->WTA);
-    fclose(log_file);
-}
-void add_Sums(pcb *p)
-{
-    SUM_WTA += p->WTA;
-    SUM_Waiting += p->waiting_time;
-    SUM_burst_time += p->running_time;
-}
-void perf_process_final()
-{
-    // log process termination to log file
-    perf_file = fopen("scheduler.perf", "a");
-    if (!perf_file)
-    {
-        perror("Error in opening log file");
-        exit(-1);
-    }
-    AVG_WTA = SUM_WTA / process_num;
-    AVG_Waiting = SUM_Waiting / process_num;
-    fprintf(perf_file, "CPU utilization = %.2f%%\n", (double)(SUM_burst_time / getClk()) * 100);
-    fprintf(perf_file, "Avg WTA = %.2f\n", AVG_WTA);
-    fprintf(perf_file, "Avg Waiting = %.2f\n", AVG_Waiting);
-    fclose(perf_file);
-}
-key_t getMessageQueue()
-{
-    // get the message queue
-    key_t msgq_id = msgget(MSGKEY, 0666 | IPC_CREAT);
-    if (msgq_id == -1)
-    {
-        perror("Error in create");
-        exit(-1);
-    }
-    return msgq_id;
-}
+// schedule algos
+void sched_hpf();
+void sched_srtn();
+void sched_rr(int);
 
-process_data *receive_process(process_data process)
-{
-    // Receive Process from the message queue
-    struct msgbuff *buf = malloc(sizeof(struct msgbuff));
-    // memset(buf, 0, sizeof(struct msgbuff));
-    key_t msgq_id = getMessageQueue();
-    // receive process from the message queue
-    int sendVal = 0;
-    if ((sendVal = msgrcv(msgq_id, buf, sizeof(*buf), 1, IPC_NOWAIT)) == -1)
-    {
-        free(buf);
-        return NULL;
-    }
-    if (!buf)
-        return NULL;
-    // since I send and Receive as a process_data object
-    process = buf->data;
-    process_data *p = malloc(sizeof(*p));
-    p = &process;
-    create_child_process(p, &pt);
-    return p;
-}
+// sig handlers
+void process_termination_handler(int);
+void process_running_time_handler(int);
 
-void create_child_process(process_data *p, process_table *pt)
-{
-    // create a child process (process.c)
-    int process_child = fork();
-    if (process_child == -1)
-    {
-        perror("Failed to fork child");
-        exit(EXIT_FAILURE);
-    }
-    else if (process_child == 0)
-    { // child :process.c
-        char *arr = malloc(sizeof(*arr));
-        sprintf(arr, "%d", p->running_time);
-        execl("./process.out", "./process.out", arr, NULL);
-    }
-    else
-    {
-        // scheduler.c
-        // send SIGSTOP signal to the process until it runs and change its id to forked id because when It runs I can send SIGCONT to it
-        // kill(process_child, SIGUSR1);
-        p->id = process_child;
-        process_table_add(pt, p);
-    }
-    return;
+key_t process_msgq_id;
+
+// all processes reside here
+doubly_linked_list process_table;
+
+int terminated_processes_count;
+
+pri_queue process_queue;
+process_control_block* running_process;
+
+int last_rr_change_time;
+
+// doubly_linked_list rr_seq;
+
+// output stuff
+
+int main(int argc, char** argv) {
+	int algorithm = atoi(argv[1]);
+	int quantum = atoi(argv[2]); // rr quantum only
+	int processesCount = atoi(argv[3]); // total num of processes
+
+	// process termination handler
+	signal(SIGUSR1, process_termination_handler);
+	signal(SIGUSR2, process_running_time_handler);
+
+	printf("[Scheduler] Starting with algo=%d, q=%d, procCount=%d\n", algorithm, quantum, processesCount);
+
+	if (algorithm < 0 || algorithm > 2) {
+		perror("Invalid algorithm");
+		exit(EXIT_FAILURE);
+	}
+
+	if (algorithm == SCHEDULING_ALGO_RR && quantum < 1) {
+		perror("Invalid RR quantum time");
+		exit(EXIT_FAILURE);
+	}
+
+	void(*algorithmHandler)(int) = 0;
+
+	switch (algorithm) {
+	case SCHEDULING_ALGO_HPF:
+		algorithmHandler = sched_hpf;
+		break;
+
+	case SCHEDULING_ALGO_SRTN:
+		algorithmHandler = sched_srtn;
+		break;
+
+	case SCHEDULING_ALGO_RR:
+		algorithmHandler = sched_rr;
+		break;
+
+	default:
+		// how did we end up here :)?
+		perror("This should never happen lol");
+		exit(EXIT_FAILURE);
+		break;
+	}
+
+	initClk();
+
+	// delete old log files
+	remove("scheduler.log");
+	remove("scheduler.perf");
+
+	// init queue & table
+	doubly_linked_list_init(&process_table);
+	pri_queue_init(&process_queue);
+
+	// doubly_linked_list_init(&rr_seq);
+
+	if (!initialize_message_queue()) {
+		perror("Msg queue init failed");
+		goto exit;
+	}
+
+	// initially 0
+	terminated_processes_count = 0;
+
+	// initially -1
+	last_rr_change_time = -1;
+
+	// when do we terminate?
+	// terminatedProcessesCount = processesCount
+
+	process_message_buffer msgBuffer;
+	while (terminated_processes_count < processesCount) {
+		// check for arrivals
+		if (msgrcv(process_msgq_id, &msgBuffer, sizeof(msgBuffer.data), 1, IPC_NOWAIT) == -1) {
+			if (errno != ENOMSG) {
+				// something went wrong
+				perror("msgrcv failure");
+				goto exit;
+			}
+
+			// we're fine
+		}
+		else {
+			// we have a new process
+			// enqueue process!
+
+			printf("[Scheduler] %d - Received new proc, pid=%d, at=%d, rt=%d\n", getClk(), msgBuffer.data.id, msgBuffer.data.arrival_time, msgBuffer.data.running_time);
+
+			process_control_block* pcb;
+			if (!register_process_control_block(&msgBuffer.data, algorithm, &pcb)) {
+				// failed
+				perror("Cannot register pcb");
+				goto exit;
+			}
+
+			// schedule algo continues the process
+
+			if (!fork_process(pcb)) {
+				perror("Cannot run process");
+				goto exit;
+			}
+		}
+
+		if (algorithmHandler) {
+			algorithmHandler(quantum);
+		}
+		else {
+			printf("No handler set, so we're doing some work ;)");
+		}
+		
+		usleep(100 * 1000); // polling
+	}
+
+
+exit:
+
+	// output pt
+	doubly_linked_list_node* n = process_table.head;
+	while (n) {
+		process_control_block* pcb = (process_control_block*)n->value;
+
+		printf("PROCESS\tid=%d\tST=%d\tFT=%d\n", pcb->pid, pcb->stats.start, pcb->stats.finish);
+
+		n = n->next;
+	}
+
+	/*n = rr_seq.head;
+	while (n) {
+		int* pcb = (int*)n->value;
+
+		printf("RR SEQ %d\n", *pcb);
+
+		n = n->next;
+	}*/
+
+	printf("[Scheduler] Exiting...\n");
+
+	// free table & queue
+	doubly_linked_list_free(&process_table);
+	pri_queue_free(&process_queue);
+
+	destroyClk(false);
+
+	return 0;
 }
 
-void HPF_Handler(int signum)
-{
-    raise(SIGCONT);
+/// Initializes the Gen-Sched msg queue
+int initialize_message_queue() {
+	process_msgq_id = msgget(MSGKEY, 0666 | IPC_CREAT);
+	if (process_msgq_id == -1) {
+		perror("Error in create Message Queue");
+		return 0;
+	}
+
+	return 1;
 }
 
-void HPF(pri_queue *processes)
-{
-    signal(SIGUSR1, HPF_Handler);
-    int x = pri_queue_dequeue(processes, (void **)&running_process);
-    if (x == 0)
-        return;
-    // start the process
-    running_pcb = process_table_find(&pt, running_process);
-    running_pcb->state = 1;
-    log_process_data(running_pcb);
-    kill(running_pcb->id, SIGCONT);
-    // waitpid(running_pcb->id, NULL, WUNTRACED);
-    //  wait for the process to finish
-    raise(SIGSTOP);
-    // stop the process and log its data
-    running_pcb->state = 4;
-    log_process_term(running_pcb);
-    add_Sums(running_pcb);
-    // remove the process from the process table
-    process_table_remove(&pt, running_process);
-    curr_process_num++;
+/// Registers a process in the process table as a PCB
+int register_process_control_block(process_data* data, int algorithm, /*out*/ process_control_block** pcbEntry) {
+	if (!data) {
+		return 0;
+	}
+
+	process_control_block* pcb = malloc(sizeof(process_control_block));
+	
+	// initially ready
+	pcb->state = PROCESS_STATE_RDY;
+
+	pcb->pid = data->id;
+	pcb->priority = data->priority;
+
+	// initially rem time = running time
+	pcb->remaining_time = data->running_time;
+	pcb->running_time = data->running_time;
+
+	pcb->arrival_time = data->arrival_time;
+
+	// not started yet
+	pcb->system.proc_pid = -1;
+	//pcb->la
+
+	// initial stats
+	pcb->stats.start = -1;
+	pcb->stats.finish = -1;
+
+	switch (algorithm) {
+	case SCHEDULING_ALGO_HPF:
+		doubly_linked_list_add(&process_table, pcb);
+		pri_queue_enqueue(&process_queue, pcb->priority, pcb);
+		break;
+
+	case SCHEDULING_ALGO_SRTN:
+		doubly_linked_list_add(&process_table, pcb);
+		pri_queue_enqueue(&process_queue, pcb->remaining_time, pcb);
+		break;
+
+	case SCHEDULING_ALGO_RR:
+		doubly_linked_list_add(&process_table, pcb);
+
+		// insert at end of queue
+		pri_queue_enqueue(&process_queue, 0, pcb);
+		break;
+
+	default:
+		perror("Unknown algorithm");
+
+		free(pcb);
+		return 0;
+	}
+
+	if (pcbEntry) {
+		*pcbEntry = pcb;
+	}
+	
+	return 1;
 }
 
-void HPF_Scheduler()
-{
-    struct pri_queue hpf_ready_queue;
-    pri_queue_init(&hpf_ready_queue);
-    while (1)
-    {
-        HPF(&hpf_ready_queue);
-        while (1)
-        {
-            received_process = receive_process(process);
-            pri_queue_enqueue(&hpf_ready_queue, received_process->priority, (void *)received_process);
-        }
-        if (curr_process_num >= process_num)
-            break;
-    }
-    perf_process_final(running_pcb);
+/// Forks a new process from pcb
+int fork_process(process_control_block* pcb) {
+	if (!pcb || pcb->state != PROCESS_STATE_RDY || pcb->system.proc_pid != -1) {
+		// dont fork process
+		return 0;
+	}
+
+	// fork
+	pid_t child = fork();
+	if (child == -1) {
+		perror("Failed to fork process");
+		return 0;
+	}
+	else if (child == 0) {
+		// alloc params
+		char param[10];
+		sprintf(param, "%d", pcb->remaining_time);
+
+		execl("./process.out", "process.out", param, NULL);
+	}
+
+	// assign system pid
+	pcb->system.proc_pid = child;
+
+	return 1;
 }
 
+process_control_block* process_table_find_pcb_from_system(int systemPid) {
+	process_control_block* pcb = 0;
+	
+	pcb_system_pid_iterator it;
+	it.system_pid = systemPid;
+	it.result = &pcb;
+	
+	doubly_linked_list_iterate(&process_table, process_table_find_pcb_from_system_iterator, (void*)&it);
 
-
-
-void RR(pri_queue *processes)
-{
-    signal(SIGALRM, RR_Handler);
-    int x = pri_queue_dequeue(processes, (void **)&running_process);
-    if (x == 0)
-        return;
-
-    // start the process
-    running_pcb = process_table_find(&pt, running_process);
-    running_pcb->state = 1;
-    log_process_data(running_pcb);
-    kill(running_pcb->id, SIGCONT);
-
-    // set an alarm for the quantum time
-    alarm(QUANTUM_TIME);
-
-    // wait for the process to finish or for the alarm to go off
-    pause();
-
-    // if the process has not finished, stop it and put it back in the queue
-    if (running_pcb->state != 4) {
-        running_pcb->state = 2;
-        log_process_data(running_pcb);
-        kill(running_pcb->id, SIGSTOP);
-        pri_queue_enqueue(processes, running_process->priority, (void *)running_process);
-    } else {
-        // process has finished
-        log_process_term(running_pcb);
-        add_Sums(running_pcb);
-        // remove the process from the process table
-        process_table_remove(&pt, running_process);
-        curr_process_num++;
-    }
+	return pcb;
 }
 
-void RR_Handler(int signum)
-{
-    // do nothing
+void run_process(process_control_block* pcb) {
+	if (!pcb || pcb->state != PROCESS_STATE_RDY || pcb->system.proc_pid == -1) {
+		// dont run process
+		return;
+	}
+
+	running_process = pcb;
+
+	printf("Setting pid=%d sysPid=%d running\n", pcb->pid, pcb->system.proc_pid);
+
+	// change state
+	pcb->state = PROCESS_STATE_RESUMED;
+
+	// set start time
+	if (pcb->stats.start == -1) {
+		pcb->stats.start = getClk();
+
+		pcb->state = PROCESS_STATE_STARTED;
+	}
+
+	//int* xxz = malloc(4); *xxz = pcb->pid;
+	//doubly_linked_list_add(&rr_seq, xxz);
+
+	// sleep for 200ms
+	usleep(200 * 1000);
+
+	// send cont signal
+	kill(pcb->system.proc_pid, SIGCONT);
 }
 
-void RR_Scheduler()
-{
-    pri_queue rr_ready_queue;
-    pri_queue_init(&rr_ready_queue);
-    while (1)
-    {
-        RR(&rr_ready_queue);
-        while (1)
-        {
-            received_process = receive_process(process);
-            pri_queue_enqueue(&rr_ready_queue, received_process->priority, (void *)received_process);
-        }
-        if (curr_process_num >= process_num)
-            break;
-    }
-    perf_process_final(running_pcb);
+void pause_process(process_control_block* pcb) {
+	if (!pcb || (pcb->state != PROCESS_STATE_STARTED && pcb->state != PROCESS_STATE_RESUMED) || pcb->system.proc_pid == -1) {
+		// dont pause process
+		return;
+	}
+
+	// keep this here for now
+	if (pcb != running_process) {
+		printf("[WARNING] PAUSING PROCESS OTHER THAN RUNNING\n");
+	}
+
+	// are we trying to pause a to be killed process?
+	if (pcb->remaining_time > 0) {
+		printf("Setting pid=%d sysPid=%d paused\n", pcb->pid, pcb->system.proc_pid);
+
+		// change state
+		pcb->state = PROCESS_STATE_RDY;
+
+		// send pause signal
+		kill(pcb->system.proc_pid, SIGTSTP);
+	}
+	else {
+		printf("Pausing a to be-dead process\n");
+		
+		// wait for it
+		int pid = wait(0);
+		printf("Sanity of dead: %d\n", pid == pcb->system.proc_pid);
+	}
+
+	running_process = 0;
 }
 
-void SRTN(pri_queue *processes)
-{
-    signal(SIGALRM, SRTN_Handler);
-    int x = pri_queue_dequeue(processes, (void **)&running_process);
-    if (x == 0)
-        return;
+// ================================Scheduling algorithms================================
 
-    // start the process
-    running_pcb = process_table_find(&pt, running_process);
-    running_pcb->state = 1;
-    log_process_data(running_pcb);
-    kill(running_pcb->id, SIGCONT);
+/// HPF scheduler
+void sched_hpf() {
+	// do we have a running process?
+	if (!running_process) {
+		// nothing running
+		// pick highest priority (lowest val)
 
-    // set an alarm for the remaining time of the process
-    alarm(running_pcb->remaining_time);
+		process_control_block* pcb;
+		if (pri_queue_dequeue(&process_queue, &pcb)) {
+			printf("HPF assigning new proc\n");
 
-    // wait for the process to finish or for the alarm to go off
-    pause();
+			run_process(pcb);
+		}
+	}
 
-    // the process has not finished
-    if (running_pcb->state != 4) {
-        running_pcb->state = 2;
-        log_process_data(running_pcb);
-        kill(running_pcb->id, SIGSTOP);
-        pri_queue_enqueue(processes, running_process->remaining_time, (void *)running_process);
-    } else {
-        // process has finished
-        log_process_term(running_pcb);
-        add_Sums(running_pcb);
-        
-        process_table_remove(&pt, running_process);
-        curr_process_num++;
-    }
+	// uncomment for pre-emption
+	/*else {
+		// we're running, but the queue may have a higher priority
+		process_control_block* potentialPcb;
+		if (pri_queue_peek(&process_queue, &potentialPcb) && potentialPcb->priority < running_process->priority) {
+			// the other process has a higher priority
+
+			printf("HPF Found process with higher priority\n");
+
+			// dequeue
+			pri_queue_dequeue(&process_queue, 0);
+
+			// re-queue running
+			pri_queue_enqueue(&process_queue, running_process->priority, running_process);
+			
+			// pause running proc
+			pause_process(running_process);
+
+			// run new one
+			run_process(potentialPcb);
+		}
+	}*/
 }
 
-void SRTN_Handler(int signum)
-{
-    // do nothing
+/// SRTN scheduler
+void sched_srtn() {
+	// do we have a running process?
+	if (!running_process) {
+		// nothing running
+		// pick shortest time
+
+		process_control_block* pcb;
+		if (pri_queue_dequeue(&process_queue, &pcb)) {
+			printf("SRTN assigning new proc\n");
+
+			run_process(pcb);
+		}
+	}
+	else {
+		// we're running, but the queue may have a lower time
+		process_control_block* potentialPcb;
+		if (pri_queue_peek(&process_queue, &potentialPcb) && potentialPcb->remaining_time < running_process->remaining_time) {
+			// the other process has a lower time
+
+			printf("SRTN Found process with lower time\n");
+
+			// dequeue
+			pri_queue_dequeue(&process_queue, 0);
+
+			// re-queue running
+			pri_queue_enqueue(&process_queue, running_process->remaining_time, running_process);
+
+			// pause running proc
+			pause_process(running_process);
+
+			// run new one
+			run_process(potentialPcb);
+		}
+	}
 }
 
-void SRTN_Scheduler()
-{
-    pri_queue srtn_ready_queue;
-    pri_queue_init(&srtn_ready_queue);
-    while (1)
-    {
-        SRTN(&srtn_ready_queue);
-        while (1)
-        {
-            received_process = receive_process(process);
-            pri_queue_enqueue(&srtn_ready_queue, received_process->remaining_time, (void *)received_process);
-        }
-        if (curr_process_num >= process_num)
-            break;
-    }
-    perf_process_final(running_pcb);
+/// RR scheduler
+void sched_rr(int quantum) {
+	// do we have a running process?
+	if (!running_process) {
+		// nothing running
+		// pick first in queue
+
+		process_control_block* pcb;
+		if (pri_queue_dequeue(&process_queue, &pcb)) {
+			printf("RR assigning new proc\n");
+
+			// update change time
+			last_rr_change_time = getClk();
+
+			run_process(pcb);
+		}
+	}
+	else {
+		int now = getClk();
+		if (now - last_rr_change_time >= quantum) {
+			printf("RR quantum change delta=%d\n", now - last_rr_change_time);
+
+			last_rr_change_time = now;
+
+			// dequeue
+			process_control_block* potentialPcb;
+			if (pri_queue_dequeue(&process_queue, &potentialPcb)) {
+				printf("RR Changing process\n");
+
+				if (running_process->remaining_time > 0) {
+					// re-queue running
+					pri_queue_enqueue(&process_queue, 0, running_process);
+				}
+
+				//printf("Queue: [ ");
+				//struct pri_queue_node* n = process_queue.head;
+				//while (n)
+				//{
+				//	printf("%d ", ((process_control_block*)n->value)->pid);
+				//	//*(int *)n->value
+				//	n = n->next;
+				//}
+
+				//printf("]\n");
+
+				if (running_process->remaining_time > 0) {
+					// pause running proc
+					pause_process(running_process);
+				}
+
+				// run new one
+				run_process(potentialPcb);
+			}
+		}
+	}
+}
+
+/// Called when a process terminates
+void process_termination_handler(int sig) {
+	pid_t pid = wait(0);
+
+	printf("Process with pid=%d just terminated\n", pid);
+
+	// find pcb
+	process_control_block* pcb = process_table_find_pcb_from_system(pid);
+	if (!pcb) {
+		// how?
+		perror("Cannot find pcb for termination");
+		
+		// exit for now
+		exit(-1);
+	}
+
+	// set state to terminated
+	pcb->state = PROCESS_STATE_TERMINATED;
+	pcb->system.proc_pid = -1;
+
+	// set finish time
+	pcb->stats.finish = getClk();
+
+	if (running_process == pcb) {
+		running_process = 0;
+	}
+
+	terminated_processes_count++;
+}
+
+void process_running_time_handler(int sig) {
+	printf("Running process updating remaining time!\n");
+
+	if (!running_process) {
+		printf("[WARNING] Received decrement signal with no running process?\n");
+		return;
+	}
+
+	printf("RPID=%d rt=%d\n", running_process->pid, running_process->remaining_time);
+
+	// decrement locally
+	running_process->remaining_time--;
+}
+
+void log_data(process_control_block* pcb) {
+	if (!pcb) return;
+
+	FILE* f = fopen("scheduler.log", "a");
+
+	char* state;
+	switch (pcb->state) {
+	case PROCESS_STATE_RDY:
+		state = "stopped";
+		break;
+
+	case PROCESS_STATE_STARTED:
+		state = "started";
+		break;
+
+	case PROCESS_STATE_RESUMED:
+		state = "resumed";
+		break;
+
+	case PROCESS_STATE_TERMINATED:
+		state = "finished";
+		break;
+
+	default:
+		state = "";
+		break;
+	}
+
+	fprintf(f, "At time %d\tprocess %d\t%s\tarr %d\ttotal %d\tremain %d\twait %d", 
+		getClk(), pcb->pid, state, pcb->arrival_time, pcb->running_time, pcb->remaining_time, );
 }

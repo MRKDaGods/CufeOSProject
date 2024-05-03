@@ -1,161 +1,224 @@
 #include "headers.h"
-void clearResources(int);
-int read_processes(pri_queue *processes);
-void fork_clk();
-void fork_scheduler(int numprocesses, char *argv[]);
-void send_process(pri_queue *processes, key_t clk_child);
-key_t msgq_id;
-pid_t clk_child, scheduler_child;
 
-int main(int argc, char *argv[])
-{
-    // TODO Initialization
-    // 1. Read the input files.
-    // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
-    // 3. Initiate and create the scheduler and clock processes.
-    // 4. Use this function after creating the clock process to initialize clock
-    // TODO Generation Main Loop
-    // 5. Create a data structure for processes and provide it with its parameters.
-    // 6. Send the information to the scheduler at the appropriate time.
-    // 7. Clear clock resources
-    signal(SIGINT, clearResources);
-    // process queue (priority = arrivalTime) incase processes.txt isnt sorted by AT
-    pri_queue processesQueue;
-    pri_queue_init(&processesQueue);
-    int x = read_processes(&processesQueue);
-    fork_clk();
-    int size = pri_queue_size(&processesQueue);
-    fork_scheduler(size, argv);
-    initClk();
-    send_process(&processesQueue, clk_child);
-    pri_queue_free(&processesQueue);
-    wait(NULL);
+void clear_resources(int);
+
+int read_processes(pri_queue* processes, int* count);
+void get_scheduler_data(int* chosenAlgorithm, int* quantum);
+
+int fork_clk(/* out */ pid_t* clkPid);
+int fork_scheduler(int algorithm, int quantum, int procCount, /* out */ pid_t* schedPid);
+
+int initialize_message_queue();
+int process_loop(pri_queue* processes, key_t clk_child);
+
+key_t process_msgq_id;
+
+int main(int argc, char* argv[]) {
+	// set interrupt handler
+	signal(SIGINT, clear_resources);
+
+	// process queue (priority = arrivalTime) incase processes.txt isnt sorted by AT
+	pri_queue processesQueue;
+	pri_queue_init(&processesQueue);
+
+	int procsCount;
+	int readProcResult;
+	if (!(readProcResult = read_processes(&processesQueue, &procsCount))) {
+		printf("Cannot read processes result=%d\n", readProcResult);
+		goto exit;
+	}
+
+	// ask user for scheduler data
+	int schedAlgo = -1;
+	int quantum = -1;
+	get_scheduler_data(&schedAlgo, &quantum);
+
+	// fork scheduler
+	pid_t schedulerPid;
+	if (!fork_scheduler(schedAlgo, quantum, procsCount, &schedulerPid)) {
+		// error msg is printed inside
+		goto exit;
+	}
+
+	pid_t clkPid;
+	if (!fork_clk(&clkPid)) {
+		goto exit;
+	}
+
+	initClk();
+
+	if (!process_loop(&processesQueue, clkPid)) {
+		perror("Error in process loop");
+		goto exit;
+	}
+
+	wait(NULL);
+
+exit:
+	pri_queue_free(&processesQueue);
+	
+	// invoke our own handler for now?
+	raise(SIGINT);
+
+	return 0;
 }
 
-void clearResources(int signum)
-{
-    msgctl(msgq_id, IPC_RMID, (struct msqid_ds *)0);
-    destroyClk(true);
-    exit(0);
+void clear_resources(int signum) {
+	printf("[ProcGen] Cleaning up...\n");
+
+	msgctl(process_msgq_id, IPC_RMID, (struct msqid_ds*)0);
+	destroyClk(true);
+	exit(0);
 }
 
-int read_processes(pri_queue *processes)
-{
-    if (!processes)
-        return 0;
+void get_scheduler_data(int* algorithm, int* quantum) {
+	do {
+		printf("Choose a scheduling algorithm\n%d - HPF (Non-preemptive Highest Priority First)\n%d - SRTN (Shortest Remaining time Next)\n%d - RR (Round Robin)\nAlgorithm: ",
+			SCHEDULING_ALGO_HPF, SCHEDULING_ALGO_SRTN, SCHEDULING_ALGO_RR);
+		scanf("%d", algorithm);
+	} while (*algorithm < 0 || *algorithm > 2);
 
-    FILE *f = fopen("processes.txt", "r");
-    if (!f)
-    {
-        // invalid file?
-        return 0;
-    }
 
-    char *line = 0;
-    size_t lineLen = 0;
-    while (getline(&line, &lineLen, f) != EOF)
-    {
-        // we have a line :P
-        // ignore empty lines or lines that start with #
-        if (lineLen == 0 ||
-            strlen(line) == 0 ||
-            line[0] == '#')
-            continue;
-
-        // allocate process
-        struct process_data *p = malloc(sizeof(process_data));
-        memset(p, 0, sizeof(process_data));
-
-        // read proc data
-        sscanf(line, "%d%d%d%d", &p->id, &p->arrival_time, &p->running_time, &p->priority);
-
-        // insert in queue
-        pri_queue_enqueue(processes, p->arrival_time, p);
-        printf("Process with id %d, arrivaltime %d, remainingtime %d, priority %d\n", p->id, p->arrival_time, p->running_time, p->priority);
-    }
-
-    // close file
-    fclose(f);
-
-    // free line
-    if (line)
-    {
-        free(line);
-    }
-
-    return 1;
+	if (*algorithm == SCHEDULING_ALGO_RR) {
+		do {
+			printf("RR quantum: ");
+			scanf("%d", quantum);
+		} while (*quantum < 1);
+	}
 }
-void fork_clk()
-{
-    pid_t clk_child = fork();
-    if (clk_child == -1)
-    {
-        perror("Failed to fork clk_child");
-        exit(EXIT_FAILURE);
-    }
 
-    else if (clk_child == 0)
-    {
-        if (execl("./clk.out", "./clk.out", NULL) == -1)
-        {
-            perror("Failed to execl clk.out");
-            exit(EXIT_FAILURE);
-        }
-    }
-    return;
+int read_processes(pri_queue* processes, int* count) {
+	if (count) {
+		*count = 0;
+	}
+
+	if (!processes)
+		return 0;
+
+	FILE* f = fopen("processes.txt", "r");
+	if (!f)
+	{
+		// invalid file?
+		return 0;
+	}
+
+	char* line = 0;
+	size_t lineLen = 0;
+	while (getline(&line, &lineLen, f) != EOF)
+	{
+		// we have a line :P
+		// ignore empty lines or lines that start with #
+		if (lineLen == 0 ||
+			strlen(line) == 0 ||
+			line[0] == '#')
+			continue;
+
+		// allocate process
+		struct process_data* p = malloc(sizeof(process_data));
+		memset(p, 0, sizeof(process_data));
+
+		// read proc data
+		sscanf(line, "%d%d%d%d", &p->id, &p->arrival_time, &p->running_time, &p->priority);
+
+		// insert in queue
+		pri_queue_enqueue(processes, p->arrival_time, p);
+		printf("Process with id %d, arrivaltime %d, remainingtime %d, priority %d\n", p->id, p->arrival_time, p->running_time, p->priority);
+
+		if (count) {
+			(*count)++;
+		}
+	}
+
+	// close file
+	fclose(f);
+
+	// free line
+	if (line)
+	{
+		free(line);
+	}
+
+	return 1;
 }
-void fork_scheduler(int numprocesses, char *argv[])
-{
-    scheduler_child = fork();
-    if (scheduler_child == -1)
-    {
-        perror("Failed to fork scheduler_child");
-        exit(EXIT_FAILURE);
-    }
-    else if (scheduler_child == 0)
-    {
-        char *arr = malloc(sizeof(*arr));
-        sprintf(arr, "%d", numprocesses);
-        execl("./scheduler.out", "./scheduler.out", argv[1], arr, NULL);
-    }
-    return;
+
+int fork_clk(/* out */ pid_t* clkPid) {
+	pid_t child = fork();
+	if (child == -1) {
+		perror("Failed to fork clk");
+		return 0;
+	}
+	else if (child == 0) {
+		execl("./clk.out", "clk.out", NULL);
+	}
+
+	*clkPid = child;
+	return 1;
 }
-void send_process(pri_queue *processes, key_t clk_child)
-{
-    // Message Queue Generation to send the process data to the scheduler
-    msgq_id = msgget(MSGKEY, 0666 | IPC_CREAT);
-    if (msgq_id == -1)
-    {
-        perror("Error in create Message Queue");
-        exit(-1);
-    }
-    int send_val;
-    struct process_data *p = malloc(sizeof(process_data));
-    memset(p, 0, sizeof(process_data));
-    struct process_data pro;
-    while (pri_queue_dequeue(processes, (void **)&p))
-    {
-        // printf("Process with id %d, arrivaltime %d, remainingtime %d, priority %d\n", p->id, p->arrival_time, p->running_time, p->priority);
-        //   printf("%d\n", getClk());
-        if (p->arrival_time > getClk())
-        {
-            // printf("waiting for %d\n", p->arrival_time - getClk());
-            sleep(p->arrival_time - getClk());
-        }
-        printf("sending process with id %d and running time %d and arrivaltime  %d and priority %d at time %d\n", p->id, p->running_time, p->arrival_time, p->priority, getClk());
-        struct msgbuff *buf = malloc(sizeof(struct msgbuff));
-        // memset(buf, 0, sizeof(struct msgbuff));
-        pro = *p;
-        buf->mtype = 1;
-        buf->data = pro;
-        send_val = msgsnd(msgq_id, buf, sizeof(buf->data), !IPC_NOWAIT);
-        if (send_val == -1)
-        {
-            perror("Error in send");
-            printf("errno: %d\n", errno);
-            exit(-1);
-        }
-        kill(clk_child, SIGCONT);
-    }
-    free(p);
+
+int fork_scheduler(int algorithm, int quantum, int procCount, /* out */ pid_t* schedPid) {
+	pid_t child = fork();
+	if (child == -1) {
+		perror("Failed to fork scheduler");
+		return 0;
+	}
+	else if (child == 0) {
+		// alloc params
+		char params[3][10];
+		sprintf(params[0], "%d", algorithm);
+		sprintf(params[1], "%d", quantum);
+		sprintf(params[2], "%d", procCount);
+
+		execl("./scheduler.out", "scheduler.out", params[0], params[1], params[2], NULL);
+	}
+
+	// parent
+
+	*schedPid = child;
+	return 1;
+}
+
+int initialize_message_queue() {
+	process_msgq_id = msgget(MSGKEY, 0666 | IPC_CREAT);
+	if (process_msgq_id == -1) {
+		perror("Error in create Message Queue");
+		return 0;
+	}
+
+	return 1;
+}
+
+int process_loop(pri_queue* processes, key_t clk_child) {
+	// Message Queue Generation to send the process data to the scheduler
+	if (!initialize_message_queue()) {
+		// error msg already printed
+		return 0;
+	}
+
+	process_message_buffer msgBuffer;
+	msgBuffer.type = 1;
+
+	process_data* proc = 0;
+	while (pri_queue_dequeue(processes, (void**)&proc))
+	{
+		// keep waiting
+		while (proc->arrival_time > getClk())
+		{
+			//printf("waiting for %d\n", proc->arrival_time - getClk());
+
+			// sleep for 200ms
+			usleep(200 * 1000);
+		}
+
+		printf("[ProcGen] %d - sending process with id %d and running time %d and arrivaltime  %d and priority %d\n", getClk(), proc->id, proc->running_time, proc->arrival_time, proc->priority);
+
+		// send via msgq
+		msgBuffer.data = *proc;
+
+		if (msgsnd(process_msgq_id, &msgBuffer, sizeof(msgBuffer.data), !IPC_NOWAIT) == -1) {
+			perror("Error in send");
+			return 0;
+		}
+	}
+
+	return 1;
 }

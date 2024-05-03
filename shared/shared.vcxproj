@@ -84,6 +84,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ClInclude Include="headers.h" />
+    <ClInclude Include="doubly_linked_list.h" />
     <ClInclude Include="pri_queue.h" />
   </ItemGroup>
   <ItemDefinitionGroup />

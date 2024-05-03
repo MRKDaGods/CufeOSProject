@@ -86,6 +86,9 @@
   <ItemGroup>
     <ClCompile Include="scheduler.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="pcb.h" />
+  </ItemGroup>
   <ItemDefinitionGroup />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

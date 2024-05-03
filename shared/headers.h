@@ -1,4 +1,7 @@
-#include <stdio.h> //if you don't use scanf/printf change this include
+#pragma once
+
+#define _GNU_SOURCE
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -13,6 +16,10 @@
 #include "pri_queue.h"
 #include <errno.h>
 
+#ifndef _STD
+#define _STD ::std::
+#endif
+
 typedef short bool;
 #define true 1
 #define false 0
@@ -23,12 +30,12 @@ typedef short bool;
 
 ///==============================
 // don't mess with this variable//
-int *shmaddr; //
+int* shmaddr; //
 //===============================
 
 int getClk()
 {
-    return *shmaddr;
+	return *shmaddr;
 }
 
 /*
@@ -37,15 +44,15 @@ int getClk()
  */
 void initClk()
 {
-    int shmid = shmget(SHKEY, 4, 0444);
-    while ((int)shmid == -1)
-    {
-        // Make sure that the clock exists
-        printf("Wait! The clock not initialized yet!\n");
-        sleep(1);
-        shmid = shmget(SHKEY, 4, 0444);
-    }
-    shmaddr = (int *)shmat(shmid, (void *)0, 0);
+	int shmid = shmget(SHKEY, 4, 0444);
+	while ((int)shmid == -1)
+	{
+		// Make sure that the clock exists
+		printf("Wait! The clock not initialized yet!\n");
+		sleep(1);
+		shmid = shmget(SHKEY, 4, 0444);
+	}
+	shmaddr = (int*)shmat(shmid, (void*)0, 0);
 }
 
 /*
@@ -58,27 +65,29 @@ void initClk()
 
 void destroyClk(bool terminateAll)
 {
-    shmdt(shmaddr);
-    if (terminateAll)
-    {
+	shmdt(shmaddr);
+	if (terminateAll)
+	{
 
-        killpg(getpgrp(), SIGINT);
-    }
+		killpg(getpgrp(), SIGINT);
+	}
 }
 
 // our stuff
 
 // process data as read from file
-typedef struct process_data
-{
-    int id;
-    int arrival_time;
-    int running_time;
-    int priority;
+typedef struct process_data {
+	int id;
+	int arrival_time;
+	int running_time;
+	int priority;
 } process_data;
 
-typedef struct msgbuff
-{
-    long mtype;
-    struct process_data data;
-} msgbuff;
+typedef struct process_message_buffer {
+	long type;
+	struct process_data data;
+} process_message_buffer;
+
+#define SCHEDULING_ALGO_HPF 0
+#define SCHEDULING_ALGO_SRTN 1
+#define SCHEDULING_ALGO_RR 2
