@@ -3,6 +3,8 @@
 #include "doubly_linked_list.h"
 #include "pcb.h"
 
+#include <math.h>
+
 int initialize_message_queue();
 int register_process_control_block(process_data* data, int algorithm, /*out*/ process_control_block** pcbEntry);
 int fork_process(process_control_block* pcb);
@@ -16,6 +18,9 @@ void sched_rr(int);
 // sig handlers
 void process_termination_handler(int);
 void process_running_time_handler(int);
+
+void log_data(process_control_block*);
+void log_perf();
 
 key_t process_msgq_id;
 
@@ -105,35 +110,40 @@ int main(int argc, char** argv) {
 	process_message_buffer msgBuffer;
 	while (terminated_processes_count < processesCount) {
 		// check for arrivals
-		if (msgrcv(process_msgq_id, &msgBuffer, sizeof(msgBuffer.data), 1, IPC_NOWAIT) == -1) {
-			if (errno != ENOMSG) {
-				// something went wrong
-				perror("msgrcv failure");
-				goto exit;
+		int canSkip = 0;
+
+		do {
+			if (msgrcv(process_msgq_id, &msgBuffer, sizeof(msgBuffer.data), 1, IPC_NOWAIT) == -1) {
+				if (errno != ENOMSG) {
+					// something went wrong
+					perror("msgrcv failure");
+					goto exit;
+				}
+
+				// we're fine
+				canSkip = 1;
 			}
+			else {
+				// we have a new process
+				// enqueue process!
 
-			// we're fine
-		}
-		else {
-			// we have a new process
-			// enqueue process!
+				printf("[Scheduler] %d - Received new proc, pid=%d, at=%d, rt=%d\n", getClk(), msgBuffer.data.id, msgBuffer.data.arrival_time, msgBuffer.data.running_time);
 
-			printf("[Scheduler] %d - Received new proc, pid=%d, at=%d, rt=%d\n", getClk(), msgBuffer.data.id, msgBuffer.data.arrival_time, msgBuffer.data.running_time);
+				process_control_block* pcb;
+				if (!register_process_control_block(&msgBuffer.data, algorithm, &pcb)) {
+					// failed
+					perror("Cannot register pcb");
+					goto exit;
+				}
 
-			process_control_block* pcb;
-			if (!register_process_control_block(&msgBuffer.data, algorithm, &pcb)) {
-				// failed
-				perror("Cannot register pcb");
-				goto exit;
+				// schedule algo continues the process
+
+				if (!fork_process(pcb)) {
+					perror("Cannot run process");
+					goto exit;
+				}
 			}
-
-			// schedule algo continues the process
-
-			if (!fork_process(pcb)) {
-				perror("Cannot run process");
-				goto exit;
-			}
-		}
+		} while (canSkip == 0);
 
 		if (algorithmHandler) {
 			algorithmHandler(quantum);
@@ -141,7 +151,7 @@ int main(int argc, char** argv) {
 		else {
 			printf("No handler set, so we're doing some work ;)");
 		}
-		
+
 		usleep(100 * 1000); // polling
 	}
 
@@ -166,6 +176,9 @@ exit:
 
 		n = n->next;
 	}*/
+
+	// log performance
+	log_perf();
 
 	printf("[Scheduler] Exiting...\n");
 
@@ -196,7 +209,7 @@ int register_process_control_block(process_data* data, int algorithm, /*out*/ pr
 	}
 
 	process_control_block* pcb = malloc(sizeof(process_control_block));
-	
+
 	// initially ready
 	pcb->state = PROCESS_STATE_RDY;
 
@@ -211,11 +224,13 @@ int register_process_control_block(process_data* data, int algorithm, /*out*/ pr
 
 	// not started yet
 	pcb->system.proc_pid = -1;
-	//pcb->la
 
 	// initial stats
 	pcb->stats.start = -1;
 	pcb->stats.finish = -1;
+
+	pcb->stats.waiting_time = 0;
+	pcb->stats.last_finish = -1;
 
 	switch (algorithm) {
 	case SCHEDULING_ALGO_HPF:
@@ -245,7 +260,7 @@ int register_process_control_block(process_data* data, int algorithm, /*out*/ pr
 	if (pcbEntry) {
 		*pcbEntry = pcb;
 	}
-	
+
 	return 1;
 }
 
@@ -278,11 +293,11 @@ int fork_process(process_control_block* pcb) {
 
 process_control_block* process_table_find_pcb_from_system(int systemPid) {
 	process_control_block* pcb = 0;
-	
+
 	pcb_system_pid_iterator it;
 	it.system_pid = systemPid;
 	it.result = &pcb;
-	
+
 	doubly_linked_list_iterate(&process_table, process_table_find_pcb_from_system_iterator, (void*)&it);
 
 	return pcb;
@@ -306,7 +321,16 @@ void run_process(process_control_block* pcb) {
 		pcb->stats.start = getClk();
 
 		pcb->state = PROCESS_STATE_STARTED;
+
+		// were we waiting?
+		pcb->stats.waiting_time += pcb->stats.start - pcb->arrival_time;
 	}
+	else {
+		// update waiting
+		pcb->stats.waiting_time += getClk() - pcb->stats.last_finish;
+	}
+
+	log_data(pcb);
 
 	//int* xxz = malloc(4); *xxz = pcb->pid;
 	//doubly_linked_list_add(&rr_seq, xxz);
@@ -335,16 +359,12 @@ void pause_process(process_control_block* pcb) {
 
 		// change state
 		pcb->state = PROCESS_STATE_RDY;
+		pcb->stats.last_finish = getClk();
+
+		log_data(pcb);
 
 		// send pause signal
 		kill(pcb->system.proc_pid, SIGTSTP);
-	}
-	else {
-		printf("Pausing a to be-dead process\n");
-		
-		// wait for it
-		int pid = wait(0);
-		printf("Sanity of dead: %d\n", pid == pcb->system.proc_pid);
 	}
 
 	running_process = 0;
@@ -381,7 +401,7 @@ void sched_hpf() {
 
 			// re-queue running
 			pri_queue_enqueue(&process_queue, running_process->priority, running_process);
-			
+
 			// pause running proc
 			pause_process(running_process);
 
@@ -496,7 +516,7 @@ void process_termination_handler(int sig) {
 	if (!pcb) {
 		// how?
 		perror("Cannot find pcb for termination");
-		
+
 		// exit for now
 		exit(-1);
 	}
@@ -507,6 +527,8 @@ void process_termination_handler(int sig) {
 
 	// set finish time
 	pcb->stats.finish = getClk();
+
+	log_data(pcb);
 
 	if (running_process == pcb) {
 		running_process = 0;
@@ -557,6 +579,60 @@ void log_data(process_control_block* pcb) {
 		break;
 	}
 
-	fprintf(f, "At time %d\tprocess %d\t%s\tarr %d\ttotal %d\tremain %d\twait %d", 
-		getClk(), pcb->pid, state, pcb->arrival_time, pcb->running_time, pcb->remaining_time, );
+	fprintf(f, "At time %d\tprocess %d\t%s   arr %d   total %d   remain %d   wait %d",
+		getClk(), pcb->pid, state, pcb->arrival_time, pcb->running_time, pcb->remaining_time, pcb->stats.waiting_time);
+
+	if (pcb->state == PROCESS_STATE_TERMINATED) {
+		fprintf(f, "   TA %d   WTA %.2f", process_control_block_turnaround_time(pcb), process_control_block_weighted_turnaround_time(pcb));
+	}
+
+	fprintf(f, "\n");
+	fclose(f);
+}
+
+void log_perf() {
+	int totalTime = 0;
+	float totalWTA = 0.f;
+	int totalWaiting = 0;
+
+	int count = 0;
+
+	doubly_linked_list_node* n = process_table.head;
+	while (n) {
+		process_control_block* pcb = (process_control_block*)n->value;
+
+		totalTime += pcb->running_time;
+		totalWTA += process_control_block_weighted_turnaround_time(pcb);
+		totalWaiting += pcb->stats.waiting_time;
+
+		count++;
+
+		n = n->next;
+	}
+
+	float utilization = totalTime / (float)getClk();
+	float avgWTA = totalWTA / (float)count;
+	float avgWaiting = totalWaiting / (float)count;
+
+	// calc std wta
+
+	float stdWTA = 0.f;
+
+	if (count > 0) {
+		doubly_linked_list_node* n = process_table.head;
+		while (n) {
+			process_control_block* pcb = (process_control_block*)n->value;
+
+			stdWTA += powf(process_control_block_weighted_turnaround_time(pcb) - avgWTA, 2);
+
+			n = n->next;
+		}
+
+		stdWTA = sqrtf(stdWTA / count);
+	}
+
+	FILE* f = fopen("scheduler.perf", "w");
+	fprintf(f, "CPU Utilization = %.2f%%\nAvg WTA = %.2f\nAvg Waiting = %.2f\nStd WTA = %.2f\n", utilization * 100.f, avgWTA, avgWaiting, stdWTA);
+
+	fclose(f);
 }

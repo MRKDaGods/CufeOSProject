@@ -35,6 +35,12 @@ int process_control_block_turnaround_time(process_control_block* pcb) {
 	return pcb->stats.finish - pcb->arrival_time;
 }
 
+float process_control_block_weighted_turnaround_time(process_control_block* pcb) {
+	if (!pcb || pcb->running_time == 0) return -1;
+
+	return process_control_block_turnaround_time(pcb) / (float)pcb->running_time;
+}
+
 typedef struct pcb_system_pid_iterator {
 	int system_pid;
 	process_control_block** result;
