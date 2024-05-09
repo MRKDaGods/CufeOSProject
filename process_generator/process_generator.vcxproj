@@ -86,7 +86,18 @@
   <ItemGroup>
     <ClCompile Include="process_generator.c" />
   </ItemGroup>
-  <ItemDefinitionGroup />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Link>
+      <LibraryDependencies>
+      </LibraryDependencies>
+      <AdditionalLibraryDirectories>%(Link.AdditionalLibraryDirectories);</AdditionalLibraryDirectories>
+    </Link>
+    <ClCompile>
+      <AdditionalOptions>
+      </AdditionalOptions>
+      <AdditionalIncludeDirectories>/usr/include/gtk-3.0;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

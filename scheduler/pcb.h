@@ -19,6 +19,7 @@ typedef struct process_control_block {
 		int finish;
 
 		// used to calc wait
+		int last_start;
 		int last_finish;
 		int waiting_time;
 	} stats;

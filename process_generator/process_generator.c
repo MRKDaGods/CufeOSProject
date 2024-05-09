@@ -12,13 +12,13 @@ int initialize_message_queue();
 int process_loop(pri_queue* processes, key_t clk_child);
 
 key_t process_msgq_id;
+pri_queue processesQueue;
 
 int main(int argc, char* argv[]) {
 	// set interrupt handler
 	signal(SIGINT, clear_resources);
 
 	// process queue (priority = arrivalTime) incase processes.txt isnt sorted by AT
-	pri_queue processesQueue;
 	pri_queue_init(&processesQueue);
 
 	int procsCount;
@@ -52,11 +52,21 @@ int main(int argc, char* argv[]) {
 		goto exit;
 	}
 
-	wait(NULL);
+	// wait for scheduler exit
+	// get ui stats
+
+#ifdef USE_UI
+	process_stat_ui_buffer buf;
+
+	do {
+		msgrcv(process_msgq_id, &buf, sizeof(buf.data), 2, !IPC_NOWAIT);
+
+		printf("Received %d %d %d\n", buf.data.pid, buf.data.start, buf.data.end);
+	} while (buf.data.hasNext);
+#endif
 
 exit:
-	pri_queue_free(&processesQueue);
-	
+
 	// invoke our own handler for now?
 	raise(SIGINT);
 
@@ -65,6 +75,8 @@ exit:
 
 void clear_resources(int signum) {
 	printf("[ProcGen] Cleaning up...\n");
+
+	pri_queue_free(&processesQueue, 1);
 
 	msgctl(process_msgq_id, IPC_RMID, (struct msqid_ds*)0);
 	destroyClk(true);

@@ -36,7 +36,10 @@ int last_rr_change_time;
 
 // doubly_linked_list rr_seq;
 
+#ifdef USE_UI
 // output stuff
+doubly_linked_list proc_ui_stats;
+#endif
 
 int main(int argc, char** argv) {
 	int algorithm = atoi(argv[1]);
@@ -90,6 +93,10 @@ int main(int argc, char** argv) {
 	// init queue & table
 	doubly_linked_list_init(&process_table);
 	pri_queue_init(&process_queue);
+
+#ifdef USE_UI
+	doubly_linked_list_init(&proc_ui_stats);
+#endif
 
 	// doubly_linked_list_init(&rr_seq);
 
@@ -180,11 +187,29 @@ exit:
 	// log performance
 	log_perf();
 
+#ifdef USE_UI
+	// ui results
+	n = proc_ui_stats.head;
+	while (n) {
+		proc_ui_stat* stat = (proc_ui_stat*)n->value;
+
+		process_stat_ui_buffer buf;
+		buf.type = 2;
+		buf.data = *stat;
+		buf.data.hasNext = n->next != 0;
+
+		// send to process gen (results)
+		msgsnd(process_msgq_id, &buf, sizeof(buf.data), !IPC_NOWAIT);
+
+		n = n->next;
+	}
+#endif
+
 	printf("[Scheduler] Exiting...\n");
 
 	// free table & queue
-	doubly_linked_list_free(&process_table);
-	pri_queue_free(&process_queue);
+	doubly_linked_list_free(&process_table, 1);
+	pri_queue_free(&process_queue, 0);
 
 	destroyClk(false);
 
@@ -315,10 +340,11 @@ void run_process(process_control_block* pcb) {
 
 	// change state
 	pcb->state = PROCESS_STATE_RESUMED;
+	pcb->stats.last_start = getClk();
 
 	// set start time
 	if (pcb->stats.start == -1) {
-		pcb->stats.start = getClk();
+		pcb->stats.start = pcb->stats.last_start;
 
 		pcb->state = PROCESS_STATE_STARTED;
 
@@ -362,6 +388,16 @@ void pause_process(process_control_block* pcb) {
 		pcb->stats.last_finish = getClk();
 
 		log_data(pcb);
+
+#ifdef USE_UI
+		// add new
+		proc_ui_stat* p = malloc(sizeof(proc_ui_stat));
+		p->pid = pcb->pid;
+		p->start = pcb->stats.last_start;
+		p->end = pcb->stats.last_finish;
+
+		doubly_linked_list_add(&proc_ui_stats, p);
+#endif
 
 		// send pause signal
 		kill(pcb->system.proc_pid, SIGTSTP);
@@ -527,6 +563,16 @@ void process_termination_handler(int sig) {
 
 	// set finish time
 	pcb->stats.finish = getClk();
+
+#ifdef USE_UI
+	// add new
+	proc_ui_stat* p = malloc(sizeof(proc_ui_stat));
+	p->pid = pcb->pid;
+	p->start = pcb->stats.last_start;
+	p->end = pcb->stats.finish;
+
+	doubly_linked_list_add(&proc_ui_stats, p);
+#endif
 
 	log_data(pcb);
 

@@ -88,6 +88,21 @@ typedef struct process_message_buffer {
 	struct process_data data;
 } process_message_buffer;
 
+
 #define SCHEDULING_ALGO_HPF 0
 #define SCHEDULING_ALGO_SRTN 1
 #define SCHEDULING_ALGO_RR 2
+
+#ifdef USE_UI
+typedef struct proc_ui_stat {
+	int pid;
+	int start;
+	int end;
+	int hasNext;
+} proc_ui_stat;
+
+typedef struct process_stat_ui_buffer {
+	long type;
+	struct proc_ui_stat data;
+} process_stat_ui_buffer;
+#endif

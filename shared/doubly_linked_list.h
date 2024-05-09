@@ -27,7 +27,7 @@ void doubly_linked_list_init(doubly_linked_list* ll)
 	ll->head = ll->tail = 0;
 }
 
-void doubly_linked_list_free(doubly_linked_list* ll)
+void doubly_linked_list_free(doubly_linked_list* ll, int freeValues)
 {
 	if (!ll)
 		return;
@@ -37,6 +37,10 @@ void doubly_linked_list_free(doubly_linked_list* ll)
 	while (n)
 	{
 		struct doubly_linked_list_node* next = n->next;
+
+		if (freeValues && n->value) {
+			free(n->value);
+		}
 
 		// delete
 		free(n);
