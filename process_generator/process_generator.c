@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
 		goto exit;
 	}
 
-	// wait for scheduler exit
+	
 	// get ui stats
 
 #ifdef USE_UI
@@ -64,6 +64,9 @@ int main(int argc, char* argv[]) {
 		printf("Received %d %d %d\n", buf.data.pid, buf.data.start, buf.data.end);
 	} while (buf.data.hasNext);
 #endif
+
+	// wait for scheduler exit
+	wait(NULL);
 
 exit:
 
@@ -130,11 +133,11 @@ int read_processes(pri_queue* processes, int* count) {
 		memset(p, 0, sizeof(process_data));
 
 		// read proc data
-		sscanf(line, "%d%d%d%d", &p->id, &p->arrival_time, &p->running_time, &p->priority);
+		sscanf(line, "%d%d%d%d%d", &p->id, &p->arrival_time, &p->running_time, &p->priority, &p->mem_size);
 
 		// insert in queue
 		pri_queue_enqueue(processes, p->arrival_time, p);
-		printf("Process with id %d, arrivaltime %d, remainingtime %d, priority %d\n", p->id, p->arrival_time, p->running_time, p->priority);
+		printf("Process with id %d, arrivaltime %d, remainingtime %d, priority %d memsize %d\n", p->id, p->arrival_time, p->running_time, p->priority, p->mem_size);
 
 		if (count) {
 			(*count)++;

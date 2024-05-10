@@ -87,6 +87,7 @@
     <ClCompile Include="scheduler.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="mem.h" />
     <ClInclude Include="pcb.h" />
   </ItemGroup>
   <ItemDefinitionGroup />

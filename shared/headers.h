@@ -81,6 +81,7 @@ typedef struct process_data {
 	int arrival_time;
 	int running_time;
 	int priority;
+	int mem_size;
 } process_data;
 
 typedef struct process_message_buffer {
@@ -106,3 +107,8 @@ typedef struct process_stat_ui_buffer {
 	struct proc_ui_stat data;
 } process_stat_ui_buffer;
 #endif
+
+typedef struct process_registration_data {
+	process_data data;
+	int algorithm;
+} process_registration_data;

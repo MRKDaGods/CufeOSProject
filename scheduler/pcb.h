@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mem.h"
+
 #define PROCESS_STATE_RDY 0
 #define PROCESS_STATE_STARTED 1
 #define PROCESS_STATE_TERMINATED 2
@@ -28,6 +30,9 @@ typedef struct process_control_block {
 	int remaining_time;
 	int running_time;
 	int arrival_time;
+
+	int mem_size;
+	memory_cell* mem_cell;
 } process_control_block;
 
 int process_control_block_turnaround_time(process_control_block* pcb) {
